@@ -41,7 +41,7 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      - name: Install & Setup Capacitor (JSON Config)
+      - name: Install & Setup Capacitor
         run: |
           npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
           cat << 'CONFIG' > capacitor.config.json
@@ -53,6 +53,19 @@ jobs:
           CONFIG
           npx cap add android
           npx cap sync android
+
+      - name: Fix Kotlin Duplicate Class Conflict
+        run: |
+          echo "
+          configurations.all {
+              resolutionStrategy.eachDependency { DependencyResolveDetails details ->
+                  def requested = details.requested
+                  if (requested.group == 'org.jetbrains.kotlin') {
+                      details.useVersion '1.8.22'
+                  }
+              }
+          }
+          " >> android/app/build.gradle
 
       - name: Make Gradlew Executable
         run: chmod +x android/gradlew
