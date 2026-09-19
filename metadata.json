@@ -1,0 +1,7 @@
+{
+  "name": "JourneyLingo",
+  "description": "Journey-based foreign language learning app with real-time analytics, location missions, AI conversation roleplay, and interactive data visualization.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
+
