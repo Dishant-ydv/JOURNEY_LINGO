@@ -41,10 +41,16 @@ jobs:
         run: |
           yes | sdkmanager --licenses || true
 
-      - name: Install & Setup Capacitor
+      - name: Install & Setup Capacitor (JSON Config)
         run: |
           npm install @capacitor/core @capacitor/cli @capacitor/android --legacy-peer-deps
-          npx cap init JourneyLingo com.journeylingo.app --web-dir dist
+          cat << 'CONFIG' > capacitor.config.json
+          {
+            "appId": "com.journeylingo.app",
+            "appName": "JourneyLingo",
+            "webDir": "dist"
+          }
+          CONFIG
           npx cap add android
           npx cap sync android
 
