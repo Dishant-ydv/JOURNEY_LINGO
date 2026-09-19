@@ -26,8 +26,9 @@ jobs:
         run: |
           npm install --legacy-peer-deps
 
-      - name: Build Web App
-        run: npm run build
+      - name: Build Web Frontend Only
+        run: |
+          npx vite build
 
       - name: Setup Java
         uses: actions/setup-java@v4
