@@ -18,9 +18,9 @@ jobs:
         with:
           node-version: 20
 
-      - name: Remove workspace file if empty
+      - name: Remove conflicting lock files
         run: |
-          rm -f pnpm-workspace.yaml bun.lock
+          rm -f pnpm-workspace.yaml pnpm-lock.yaml bun.lock
 
       - name: Install Dependencies
         run: |
