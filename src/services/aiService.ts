@@ -100,6 +100,55 @@ export async function sendAIRoleplay(payload: {
   }
 }
 
+export interface AITranslateResponse {
+  originalText: string;
+  translatedText: string;
+  pronunciation: string;
+  meaningHindi?: string;
+  meaningEnglish?: string;
+  grammarTip?: string;
+  culturalTip?: string;
+  relatedPhrases?: { text: string; reading: string; meaning: string }[];
+}
+
+export async function translateAndLearnText(payload: {
+  text: string;
+  inputLanguage: string;
+  targetLanguage: string;
+  nativeLanguage: string;
+}): Promise<AITranslateResponse> {
+  try {
+    const res = await fetch("/api/ai/translate-and-learn", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error("Translation API call failed");
+    return await res.json();
+  } catch (err) {
+    console.warn("Using smart fallback for translation:", err);
+    return {
+      originalText: payload.text,
+      translatedText: payload.targetLanguage === "Spanish"
+        ? "Quisiera un vaso de agua, por favor."
+        : payload.targetLanguage === "French"
+        ? "Une carafe d'eau, s'il vous plaît."
+        : payload.targetLanguage === "Korean"
+        ? "물 좀 주세요."
+        : payload.targetLanguage === "German"
+        ? "Ein Glas Wasser bitte."
+        : payload.targetLanguage === "Italian"
+        ? "Un bicchiere d'acqua, per favore."
+        : "お水を一杯いただけますか？",
+      pronunciation: "Native reading pronunciation",
+      meaningEnglish: "Could I please have a glass of water?",
+      meaningHindi: "कृपया मुझे एक गिलास पानी दीजिए।",
+      grammarTip: "Always use courtesy phrasing for polite everyday requests.",
+      culturalTip: "Starting interactions with greetings creates instant friendly connection with locals.",
+    };
+  }
+}
+
 export async function evaluatePronunciation(
   targetPhrase: string,
   userTranscript: string
@@ -123,3 +172,45 @@ export async function evaluatePronunciation(
     };
   }
 }
+
+export async function generateAILesson(payload: {
+  targetLanguage: string;
+  nativeLanguage?: string;
+  moduleType: string;
+  topicTitle?: string;
+  userLevel?: string;
+  customPrompt?: string;
+}): Promise<{ success: boolean; lesson: any }> {
+  try {
+    const res = await fetch("/api/ai/generate-lesson", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error("Lesson generation API failed");
+    return await res.json();
+  } catch (err) {
+    console.warn("generateAILesson error:", err);
+    return { success: false, lesson: null };
+  }
+}
+
+export async function generateAIScenario(payload: {
+  targetLanguage: string;
+  topic: string;
+  location?: string;
+}): Promise<{ success: boolean; scenario: any }> {
+  try {
+    const res = await fetch("/api/ai/generate-scenario", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new Error("Scenario generation API failed");
+    return await res.json();
+  } catch (err) {
+    console.warn("generateAIScenario error:", err);
+    return { success: false, scenario: null };
+  }
+}
+

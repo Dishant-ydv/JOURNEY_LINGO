@@ -3,6 +3,12 @@ import path from "path";
 import dotenv from "dotenv";
 import { GoogleGenAI } from "@google/genai";
 import { createServer as createViteServer } from "vite";
+import {
+  getFallbackConversation,
+  getFallbackRoleplay,
+  getFallbackPronunciation,
+  getFallbackTranslation,
+} from "./src/data/fallbackData.ts";
 
 dotenv.config();
 
@@ -27,6 +33,48 @@ function getGeminiClient(): GoogleGenAI | null {
   return aiClient;
 }
 
+// Multi-model cascade: Try gemini-3.8-flash, fall back to gemini-3.1-flash-lite, then gemini-flash-latest
+async function callGeminiWithCascade(
+  ai: GoogleGenAI,
+  prompt: string,
+  jsonMime = true,
+  temperature = 0.7
+): Promise<string> {
+  const models = ["gemini-3.8-flash", "gemini-3.1-flash-lite", "gemini-flash-latest"];
+  let lastError: any = null;
+
+  for (const model of models) {
+    try {
+      const response = await ai.models.generateContent({
+        model,
+        contents: prompt,
+        config: {
+          ...(jsonMime ? { responseMimeType: "application/json" } : {}),
+          temperature,
+        },
+      });
+      if (response && response.text) {
+        return response.text;
+      }
+    } catch (err: any) {
+      lastError = err;
+      const isUnavailable =
+        err?.status === "UNAVAILABLE" ||
+        err?.status === 503 ||
+        err?.message?.includes("503") ||
+        err?.message?.includes("high demand") ||
+        err?.message?.includes("RESOURCE_EXHAUSTED");
+
+      if (isUnavailable) {
+        console.warn(`[Gemini Cascade] ${model} high demand / 503 spike. Trying backup model...`);
+      } else {
+        console.warn(`[Gemini Cascade] ${model} unavailable: ${err?.message || err}`);
+      }
+    }
+  }
+  throw lastError || new Error("All Gemini models temporarily unavailable");
+}
+
 // Health check
 app.get("/api/health", (_req, res) => {
   res.json({
@@ -38,15 +86,15 @@ app.get("/api/health", (_req, res) => {
 
 // AI Conversation Endpoint (Topic & Free Dialogue)
 app.post("/api/ai/conversation", async (req, res) => {
-  try {
-    const {
-      topic = "Travel Plans",
-      targetLanguage = "Japanese",
-      nativeLanguage = "English",
-      userMessage,
-      history = [],
-    } = req.body;
+  const {
+    topic = "Travel Plans",
+    targetLanguage = "Japanese",
+    nativeLanguage = "English",
+    userMessage = "",
+    history = [],
+  } = req.body;
 
+  try {
     const ai = getGeminiClient();
 
     if (ai) {
@@ -75,59 +123,35 @@ Respond in JSON with the following schema:
   "suggestedReplies": ["short helpful suggestion 1 for user to say next in target language", "short helpful suggestion 2"]
 }`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          temperature: 0.7,
-        },
-      });
-
-      const responseText = response.text || "{}";
-      const parsed = JSON.parse(responseText);
-      return res.json(parsed);
-    } else {
-      // High-quality contextual fallback
-      return res.json({
-        reply: `はい、素晴らしいですね！${topic}についてもっと詳しく聞かせてください。(Hai, subarashii desu ne!)`,
-        romanization: "Hai, subarashii desu ne! Motto kikasete kudasai.",
-        translation: `Yes, that sounds wonderful! Please tell me more about your ${topic}.`,
-        feedback: "Great natural response! Your sentence structure was clear and easy to understand.",
-        mistakes: [],
-        suggestedReplies: [
-          "どこが一番おすすめですか？ (Doko ga ichiban osusume desu ka?)",
-          "電車で行けますか？ (Densha de ikemasu ka?)",
-        ],
-      });
+      try {
+        const responseText = await callGeminiWithCascade(ai, prompt, true, 0.7);
+        const parsed = JSON.parse(responseText);
+        return res.json(parsed);
+      } catch (geminiError: any) {
+        console.warn("[Gemini Conversation Fallback Activated]:", geminiError?.message || geminiError);
+      }
     }
   } catch (error: any) {
-    console.error("AI Conversation error:", error);
-    res.status(500).json({
-      error: "Failed to generate conversation response",
-      details: error.message,
-      reply: "こんにちは！一緒に練習しましょう！(Konnichiwa! Issho ni renshuu shimashou!)",
-      translation: "Hello! Let's practice together!",
-      feedback: "Keep practicing! Every attempt helps you get closer to fluency.",
-      mistakes: [],
-      suggestedReplies: ["はい、お願いします！ (Hai, onegaishimasu!)"],
-    });
+    console.warn("AI Conversation notice:", error?.message || error);
   }
+
+  // High-quality contextual fallback (200 OK guarantees smooth UX)
+  return res.json(getFallbackConversation(targetLanguage, topic, userMessage));
 });
 
 // AI Roleplay Endpoint (Airport, Hotel, Restaurant, Metro, Shopping)
 app.post("/api/ai/roleplay", async (req, res) => {
-  try {
-    const {
-      scenario = "Hotel Check-in",
-      location = "Sakura Hotel, Tokyo",
-      role = "Hotel Receptionist",
-      userMessage,
-      history = [],
-      targetLanguage = "Japanese",
-      isEndTurn = false,
-    } = req.body;
+  const {
+    scenario = "Hotel Check-in",
+    location = "Sakura Hotel, Tokyo",
+    role = "Hotel Receptionist",
+    userMessage = "",
+    history = [],
+    targetLanguage = "Japanese",
+    isEndTurn = false,
+  } = req.body;
 
+  try {
     const ai = getGeminiClient();
 
     if (ai) {
@@ -158,66 +182,34 @@ Respond in JSON schema:
     "overall": 86,
     "feedback": "Encouraging evaluation of the traveler's phrasing and etiquette."
   },
-  "isCompleted": ${isEndTurn},
+  "isCompleted": ${Boolean(isEndTurn)},
   "suggestedResponses": [
     "Useful line in target language option 1",
     "Useful line in target language option 2"
   ]
 }`;
 
-      const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          temperature: 0.6,
-        },
-      });
-
-      const responseText = response.text || "{}";
-      const parsed = JSON.parse(responseText);
-      return res.json(parsed);
-    } else {
-      // Realistic fallback response
-      const fallbackReplies: Record<string, any> = {
-        "Hotel Check-in": {
-          reply: "かしこまりました。ご予約のお名前とお電話番号を教えていただけますでしょうか？",
-          romanization: "Kashikomarimashita. Go-yoyaku no onamae to o-denwa bangou wo oshiete itadakemasu deshou ka?",
-          translation: "Certainly. Could you please tell me your reservation name and phone number?",
-          performance: {
-            fluency: 88,
-            vocabulary: 84,
-            grammar: 86,
-            overall: 86,
-            feedback: "Polite tone and accurate vocabulary for check-in! Great confidence.",
-          },
-          isCompleted: Boolean(isEndTurn),
-          suggestedResponses: [
-            "予約の名前はDishantです。(Yoyaku no namae wa Dishant desu.)",
-            "パスポートをお見せします。(Pasupooto wo omise shimasu.)",
-          ],
-        },
-      };
-
-      const match = fallbackReplies[scenario] || fallbackReplies["Hotel Check-in"];
-      return res.json(match);
+      try {
+        const responseText = await callGeminiWithCascade(ai, prompt, true, 0.6);
+        const parsed = JSON.parse(responseText);
+        return res.json(parsed);
+      } catch (geminiError: any) {
+        console.warn("[Gemini Roleplay Fallback Activated]:", geminiError?.message || geminiError);
+      }
     }
   } catch (error: any) {
-    console.error("AI Roleplay error:", error);
-    res.status(500).json({
-      error: "Failed to generate roleplay response",
-      reply: "いらっしゃいませ！何かお手伝いしましょうか？ (Irasshaimase! Nanika otetsudai shimashou ka?)",
-      translation: "Welcome! May I help you?",
-      performance: { fluency: 80, vocabulary: 80, grammar: 80, overall: 80, feedback: "Good effort!" },
-      suggestedResponses: ["チェックインをお願いします。(Chekkuin wo onegaishimasu.)"],
-    });
+    console.warn("AI Roleplay notice:", error?.message || error);
   }
+
+  // Realistic fallback response (200 OK)
+  return res.json(getFallbackRoleplay(scenario, role, location, targetLanguage, isEndTurn));
 });
 
 // AI Pronunciation & Audio Evaluation
 app.post("/api/ai/evaluate-pronunciation", async (req, res) => {
+  const { targetPhrase = "", userTranscript = "", audioConfidence = 0.9 } = req.body;
+
   try {
-    const { targetPhrase, userTranscript = "", audioConfidence = 0.9 } = req.body;
     const ai = getGeminiClient();
 
     if (ai && userTranscript) {
@@ -231,39 +223,305 @@ Respond in JSON format:
   "phoneticFeedback": "Clear vowel pronunciation. Pay close attention to geminate consonants (double consonants).",
   "passed": true
 }`;
-      const response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          temperature: 0.2,
-        },
-      });
-      const parsed = JSON.parse(response.text || "{}");
-      return res.json(parsed);
-    } else {
-      const normalizedTarget = targetPhrase.trim().toLowerCase();
-      const normalizedUser = (userTranscript || targetPhrase).trim().toLowerCase();
-      const match = normalizedTarget === normalizedUser;
-      const score = match ? Math.floor(85 + Math.random() * 12) : 78;
+      try {
+        const text = await callGeminiWithCascade(ai, prompt, true, 0.2);
+        const parsed = JSON.parse(text);
+        return res.json(parsed);
+      } catch (geminiError: any) {
+        console.warn("[Gemini Pronunciation Fallback Activated]:", geminiError?.message || geminiError);
+      }
+    }
+  } catch (err: any) {
+    console.warn("Pronunciation evaluation notice:", err?.message || err);
+  }
 
-      return res.json({
-        score,
-        accuracy: score + 2,
-        intonation: "Accurate pitch accent and clear vowel endings.",
-        phoneticFeedback: `Excellent articulation of "${targetPhrase}". Rhythmic timing aligns with native speech patterns.`,
-        passed: score >= 70,
-      });
+  return res.json(getFallbackPronunciation(targetPhrase, userTranscript));
+});
+
+// Dynamic AI Translation & Sentence Generator Endpoint
+app.post("/api/ai/translate-and-learn", async (req, res) => {
+  try {
+    const {
+      text = "",
+      inputLanguage = "Hindi",
+      targetLanguage = "Japanese",
+      nativeLanguage = "Hindi",
+    } = req.body;
+
+    if (!text || !text.trim()) {
+      return res.status(400).json({ error: "Text is required" });
+    }
+
+    const ai = getGeminiClient();
+
+    if (ai) {
+      const prompt = `You are an expert polyglot language tutor.
+The user wants to learn: "${targetLanguage}".
+The user provides input in their own language (${inputLanguage} / ${nativeLanguage}): "${text}".
+
+Task:
+1. Translate this accurately into natural, authentic ${targetLanguage}.
+2. Provide easy-to-read pronunciation (romaji/phonetics).
+3. Provide an explanation and breakdown in both Hindi and English.
+4. Give a practical cultural travel tip.
+5. Provide 2-3 similar related useful phrases in ${targetLanguage}.
+
+Return strictly JSON with schema:
+{
+  "originalText": "${text}",
+  "translatedText": "Target translation in ${targetLanguage}",
+  "pronunciation": "Pronunciation / reading guide",
+  "meaningHindi": "Hindi meaning",
+  "meaningEnglish": "English meaning",
+  "grammarTip": "Short grammar or word breakdown explanation",
+  "culturalTip": "Helpful travel or etiquette tip",
+  "relatedPhrases": [
+    { "text": "phrase 1 in ${targetLanguage}", "reading": "reading 1", "meaning": "meaning 1" },
+    { "text": "phrase 2 in ${targetLanguage}", "reading": "reading 2", "meaning": "meaning 2" }
+  ]
+}`;
+
+      try {
+        const textResponse = await callGeminiWithCascade(ai, prompt, true, 0.3);
+        const parsed = JSON.parse(textResponse);
+        return res.json(parsed);
+      } catch (geminiError: any) {
+        console.warn("[Gemini Translate Fallback Activated]:", geminiError?.message || geminiError);
+      }
     }
   } catch (error: any) {
-    res.json({
-      score: 82,
-      accuracy: 84,
-      intonation: "Natural cadence",
-      phoneticFeedback: "Well enunciated! Continue practicing the rhythm.",
-      passed: true,
-    });
+    console.warn("AI Translation notice:", error?.message || error);
   }
+
+  // Structured fallback dictionary for common travel inputs
+  const text = req.body?.text || "";
+  const targetLanguage = req.body?.targetLanguage || "Japanese";
+  return res.json(getFallbackTranslation(text, targetLanguage));
+});
+
+// Dynamic AI Lesson Generation Endpoint (Generates 100% real dynamic curriculum)
+app.post("/api/ai/generate-lesson", async (req, res) => {
+  const {
+    targetLanguage = "Japanese",
+    nativeLanguage = "English",
+    moduleType = "airport",
+    topicTitle = "",
+    userLevel = "Beginner",
+    customPrompt = "",
+  } = req.body;
+
+  const ai = getGeminiClient();
+  if (ai) {
+    const prompt = `You are a world-class language curriculum designer and foreign language native tutor for travelers.
+Generate a comprehensive, engaging, authentic foreign language lesson JSON for a traveler.
+
+Target Language: ${targetLanguage}
+Learner's Reference Languages: English AND Hindi
+Module Category / Topic: ${topicTitle || moduleType}
+Learner Level: ${userLevel}
+Special Context: ${customPrompt || "Travel scenario with real everyday dialogues, high frequency vocabulary, grammar rule, interactive practice questions, and quiz."}
+
+IMPORTANT CRITICAL REQUIREMENTS:
+1. Every dialogue line and example MUST have:
+   - "japanese": The actual sentence in ${targetLanguage} (e.g. Spanish, French, German, Korean, Italian, Japanese, Arabic, etc. - in actual native script/characters)
+   - "romaji": The pronunciation guide / phonetics / romanization
+   - "english": Accurate English translation
+   - "hindi": Accurate Hindi translation in Devanagari script (e.g. "नमस्ते", "कृपया मुझे बिल दीजिए")
+2. Vocabulary items MUST include 5 to 6 practical travel words with:
+   - "id": unique string
+   - "word": Word in ${targetLanguage}
+   - "reading": Phonetic reading
+   - "meaning": English meaning
+   - "hindiMeaning": Hindi meaning
+   - "partOfSpeech": noun/verb/adjective/phrase
+   - "exampleSentence": Example in ${targetLanguage}
+   - "exampleReading": Phonetics of example
+   - "exampleMeaning": English of example
+   - "exampleHindi": Hindi of example
+   - "tip": Useful cultural or usage tip
+3. Grammar breakdown MUST have a relevant pattern used in this scenario with clear explanation in English and Hindi, structure formula, and 3 example sentences.
+4. Practice activities MUST have:
+   - "fillInTheBlank": sentence with "___", missingWord, options array (4 choices with the correct one included)
+   - "matchPairs": 4 pairs of { "left": "${targetLanguage} phrase", "right": "English meaning" }
+   - "dragDropWords": 4 to 5 words from a target sentence
+5. Mini quiz MUST have 3 to 4 realistic travel comprehension questions with prompt (English), japanesePrompt (in ${targetLanguage}), hindiPrompt, options (4 items), correctAnswer (exact string matching one option), and explanation.
+6. Scene intro: title, subtitle, description, highlights (array of 3-4 strings).
+
+Return ONLY a valid JSON object with the following schema:
+{
+  "id": "ai-lesson-${Date.now()}",
+  "title": "string (Catchy module title)",
+  "location": "string (Realistic specific landmark or place name)",
+  "step": 1,
+  "sceneIntro": {
+    "title": "string",
+    "subtitle": "string",
+    "description": "string",
+    "highlights": ["highlight 1", "highlight 2", "highlight 3"]
+  },
+  "dialogue": [
+    {
+      "id": "dlg-1",
+      "speaker": "Local Agent / Staff",
+      "avatar": "✈️",
+      "role": "agent",
+      "japanese": "Sentence in ${targetLanguage}",
+      "romaji": "Pronunciation reading",
+      "english": "English translation",
+      "hindi": "Hindi translation"
+    },
+    {
+      "id": "dlg-2",
+      "speaker": "Traveler",
+      "avatar": "🧑‍🦱",
+      "role": "user",
+      "japanese": "Sentence in ${targetLanguage}",
+      "romaji": "Pronunciation reading",
+      "english": "English translation",
+      "hindi": "Hindi translation"
+    },
+    {
+      "id": "dlg-3",
+      "speaker": "Local Agent",
+      "avatar": "✈️",
+      "role": "agent",
+      "japanese": "Sentence in ${targetLanguage}",
+      "romaji": "Pronunciation reading",
+      "english": "English translation",
+      "hindi": "Hindi translation"
+    },
+    {
+      "id": "dlg-4",
+      "speaker": "Traveler",
+      "avatar": "🧑‍🦱",
+      "role": "user",
+      "japanese": "Sentence in ${targetLanguage}",
+      "romaji": "Pronunciation reading",
+      "english": "English translation",
+      "hindi": "Hindi translation"
+    }
+  ],
+  "vocabulary": [
+    {
+      "id": "voc-1",
+      "word": "string in ${targetLanguage}",
+      "reading": "string phonetics",
+      "meaning": "string in English",
+      "hindiMeaning": "string in Hindi",
+      "partOfSpeech": "phrase/noun/verb",
+      "exampleSentence": "string in ${targetLanguage}",
+      "exampleReading": "string",
+      "exampleMeaning": "string",
+      "exampleHindi": "string",
+      "tip": "string"
+    }
+  ],
+  "grammar": {
+    "title": "string",
+    "pattern": "string",
+    "explanation": "string in English",
+    "hindiExplanation": "string in Hindi",
+    "structure": "string formula",
+    "examples": [
+      {
+        "japanese": "Sentence in ${targetLanguage}",
+        "romaji": "Pronunciation",
+        "english": "English",
+        "hindi": "Hindi"
+      }
+    ]
+  },
+  "practiceActivities": {
+    "fillInTheBlank": {
+      "sentence": "string with ___",
+      "missingWord": "string",
+      "options": ["correct", "wrong1", "wrong2", "wrong3"]
+    },
+    "matchPairs": [
+      { "left": "${targetLanguage} phrase 1", "right": "Meaning 1" },
+      { "left": "${targetLanguage} phrase 2", "right": "Meaning 2" },
+      { "left": "${targetLanguage} phrase 3", "right": "Meaning 3" },
+      { "left": "${targetLanguage} phrase 4", "right": "Meaning 4" }
+    ],
+    "dragDropWords": ["word1", "word2", "word3", "word4"]
+  },
+  "miniQuiz": [
+    {
+      "id": "q-1",
+      "type": "mcq",
+      "prompt": "Question in English",
+      "japanesePrompt": "Question or sentence in ${targetLanguage}",
+      "hindiPrompt": "Question in Hindi",
+      "options": ["option 0", "option 1", "option 2", "option 3"],
+      "correctAnswer": "exact matching string of the correct option",
+      "explanation": "Detailed explanation of why this answer is correct in this travel situation"
+    }
+  ],
+  "summary": {
+    "newWordsCount": 6,
+    "grammarPointsCount": 1,
+    "activitiesCompleted": 3,
+    "xpReward": 60
+  }
+}`;
+
+    try {
+      const responseText = await callGeminiWithCascade(ai, prompt, true, 0.7);
+      const parsed = JSON.parse(responseText);
+      return res.json({ success: true, lesson: parsed, generatedBy: "gemini" });
+    } catch (err: any) {
+      console.warn("Gemini dynamic lesson generation notice:", err?.message || err);
+    }
+  }
+
+  return res.json({
+    success: false,
+    message: "Using initial seed curriculum",
+    lesson: null,
+  });
+});
+
+// Dynamic AI Roleplay Scenario Generation Endpoint
+app.post("/api/ai/generate-scenario", async (req, res) => {
+  const { targetLanguage = "Japanese", topic = "Hotel Check-in", location = "Tokyo" } = req.body;
+  const ai = getGeminiClient();
+  if (ai) {
+    const prompt = `Generate a realistic foreign language roleplay scenario JSON for learning ${targetLanguage}.
+Topic: ${topic}
+Location: ${location}
+Include:
+- title
+- aiRole
+- aiAvatar
+- brief
+- goal
+- initialMessage in ${targetLanguage}
+- initialRomaji (pronunciation guide)
+- initialTranslation (in English)
+- suggestedPrompts: array of 3 possible user responses in ${targetLanguage} with English translation in parentheses.
+
+Return ONLY valid JSON matching this schema:
+{
+  "id": "scenario-${Date.now()}",
+  "title": "string",
+  "location": "string",
+  "aiRole": "string",
+  "aiAvatar": "emoji",
+  "brief": "string",
+  "goal": "string",
+  "initialMessage": "string in ${targetLanguage}",
+  "initialRomaji": "string",
+  "initialTranslation": "string",
+  "suggestedPrompts": ["phrase 1 (translation)", "phrase 2 (translation)", "phrase 3 (translation)"]
+}`;
+    try {
+      const responseText = await callGeminiWithCascade(ai, prompt, true, 0.7);
+      return res.json({ success: true, scenario: JSON.parse(responseText) });
+    } catch (err) {
+      console.warn("Scenario generation notice:", err);
+    }
+  }
+  return res.json({ success: false, scenario: null });
 });
 
 // Vite middleware & Production static serving

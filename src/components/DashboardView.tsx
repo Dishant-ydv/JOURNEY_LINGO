@@ -20,6 +20,7 @@ import {
   ChevronRight,
 } from "lucide-react";
 import { UserProfile, JourneyLocation, AppTab } from "../types";
+import { getLanguageMeta } from "../data/multilingualData";
 
 interface Props {
   user: UserProfile;
@@ -36,6 +37,8 @@ export const DashboardView: React.FC<Props> = ({
   onSelectLocation,
   sessionSeconds,
 }) => {
+  const langMeta = getLanguageMeta(user.targetLanguage || "Japanese");
+
   const getLocationIcon = (iconName: string, className = "w-5 h-5") => {
     switch (iconName) {
       case "Plane":
@@ -83,7 +86,7 @@ export const DashboardView: React.FC<Props> = ({
               </span>
             </div>
             <p className="text-xs text-slate-500 mt-0.5">
-              Ready to continue your {user.targetLanguage.split(" ")[0]} journey?
+              Ready to continue your <strong className="text-indigo-600">{user.targetLanguage}</strong> journey in {langMeta.city}? {langMeta.flag}
             </p>
           </div>
         </div>
@@ -119,24 +122,24 @@ export const DashboardView: React.FC<Props> = ({
         </div>
       </div>
 
-      {/* Active Destination Card (Tokyo, Japan) */}
+      {/* Active Destination Card (Dynamic City & Target Language) */}
       <div className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-indigo-900 via-indigo-800 to-purple-900 text-white p-6 shadow-xl shadow-indigo-900/10">
         <div className="absolute right-0 top-0 bottom-0 w-1/2 opacity-20 pointer-events-none flex items-center justify-end pr-8">
-          <span className="text-9xl font-black">東京</span>
+          <span className="text-7xl sm:text-9xl font-black">{langMeta.nativeName}</span>
         </div>
 
         <div className="relative z-10 max-w-lg space-y-3">
           <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-white/10 backdrop-blur-md text-xs font-medium text-indigo-200">
             <Compass className="w-3.5 h-3.5 text-indigo-300" />
-            Current Exploration
+            Current Exploration • {user.targetLanguage} {langMeta.flag}
           </div>
 
           <div>
             <h2 className="text-2xl sm:text-3xl font-black tracking-tight">
-              {user.targetCity}, {user.targetCountry}
+              {langMeta.city}, {langMeta.country}
             </h2>
             <p className="text-sm text-indigo-200 mt-1">
-              You are on a roll! Keep going to unlock Shibuya Dining.
+              You are making great progress! Step into authentic scenarios across {langMeta.city}.
             </p>
           </div>
 
@@ -144,12 +147,12 @@ export const DashboardView: React.FC<Props> = ({
           <div className="space-y-1.5 pt-1">
             <div className="flex justify-between text-xs font-semibold text-indigo-200">
               <span>Mission Progress</span>
-              <span>35% Complete</span>
+              <span>42% Complete</span>
             </div>
             <div className="w-full bg-white/20 h-2.5 rounded-full overflow-hidden">
               <div
                 className="h-full bg-gradient-to-r from-emerald-400 to-teal-300 rounded-full transition-all duration-500"
-                style={{ width: "35%" }}
+                style={{ width: "42%" }}
               />
             </div>
           </div>
@@ -167,7 +170,7 @@ export const DashboardView: React.FC<Props> = ({
               className="px-4 py-2.5 bg-indigo-700/60 hover:bg-indigo-700 text-white font-semibold rounded-xl text-sm border border-indigo-400/30 transition-all flex items-center gap-2"
             >
               <MessageSquare className="w-4 h-4" />
-              AI Conversation Practice
+              AI Practice & Hindi Tool
             </button>
           </div>
         </div>
@@ -207,14 +210,14 @@ export const DashboardView: React.FC<Props> = ({
               <div
                 key={loc.id}
                 onClick={() => {
-                  if (!isLocked) onSelectLocation(loc.id);
+                  onSelectLocation(loc.id);
                 }}
-                className={`relative p-4 rounded-2xl border text-center flex flex-col items-center justify-between transition-all ${
+                className={`relative p-4 rounded-2xl border text-center flex flex-col items-center justify-between transition-all cursor-pointer hover:shadow-xs hover:border-indigo-300 ${
                   isCompleted
-                    ? "bg-emerald-50/50 border-emerald-200 text-emerald-950 cursor-pointer hover:shadow-xs"
+                    ? "bg-emerald-50/50 border-emerald-200 text-emerald-950"
                     : isInProgress
-                    ? "bg-indigo-50/70 border-indigo-300 ring-2 ring-indigo-500/20 text-indigo-950 cursor-pointer shadow-xs"
-                    : "bg-slate-50/60 border-slate-200 text-slate-400 cursor-not-allowed opacity-75"
+                    ? "bg-indigo-50/70 border-indigo-300 ring-2 ring-indigo-500/20 text-indigo-950 shadow-xs"
+                    : "bg-white border-slate-200 text-slate-700"
                 }`}
               >
                 <div className="absolute top-2 right-2">
@@ -225,7 +228,11 @@ export const DashboardView: React.FC<Props> = ({
                       <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-indigo-600"></span>
                     </span>
                   )}
-                  {isLocked && <Lock className="w-3.5 h-3.5 text-slate-400" />}
+                  {isLocked && (
+                    <span className="text-[10px] text-indigo-500 font-bold bg-indigo-50 px-1.5 py-0.5 rounded-md">
+                      0{loc.order}
+                    </span>
+                  )}
                 </div>
 
                 <div
@@ -234,7 +241,7 @@ export const DashboardView: React.FC<Props> = ({
                       ? "bg-emerald-600 text-white"
                       : isInProgress
                       ? "bg-indigo-600 text-white"
-                      : "bg-slate-200 text-slate-400"
+                      : "bg-indigo-50 text-indigo-700"
                   }`}
                 >
                   {getLocationIcon(loc.iconName)}
@@ -250,8 +257,8 @@ export const DashboardView: React.FC<Props> = ({
 
                 <div className="mt-2 text-[10px] font-semibold">
                   {isCompleted && <span className="text-emerald-700">Completed</span>}
-                  {isInProgress && <span className="text-indigo-600">In Progress (3/5)</span>}
-                  {isLocked && <span className="text-slate-400">Locked</span>}
+                  {isInProgress && <span className="text-indigo-600">In Progress</span>}
+                  {isLocked && <span className="text-indigo-600">Start Mission →</span>}
                 </div>
               </div>
             );

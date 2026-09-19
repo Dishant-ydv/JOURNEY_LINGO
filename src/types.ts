@@ -45,10 +45,12 @@ export interface VocabWord {
   word: string;
   reading: string; // e.g. romaji or kana
   meaning: string;
+  hindiMeaning?: string;
   partOfSpeech: string;
   exampleSentence: string;
   exampleReading: string;
   exampleMeaning: string;
+  exampleHindi?: string;
   tip?: string;
   audioText?: string;
   isBookmarked?: boolean;
@@ -62,6 +64,7 @@ export interface DialogueLine {
   japanese: string;
   romaji: string;
   english: string;
+  hindi?: string;
   audioPrompt?: string;
 }
 
@@ -69,11 +72,13 @@ export interface GrammarPoint {
   title: string;
   pattern: string;
   explanation: string;
+  hindiExplanation?: string;
   structure: string;
   examples: {
     japanese: string;
     romaji: string;
     english: string;
+    hindi?: string;
   }[];
 }
 
@@ -82,6 +87,7 @@ export interface QuizQuestion {
   type: "mcq" | "fill_blank" | "match" | "listening";
   prompt: string;
   japanesePrompt?: string;
+  hindiPrompt?: string;
   options: string[];
   correctAnswer: string;
   explanation: string;
@@ -163,4 +169,56 @@ export interface RecentActivity {
   category: "lesson" | "ai_conversation" | "pronunciation" | "listening";
   timestamp: string;
   xpEarned: number;
+}
+
+export interface FallbackConversation {
+  reply: string;
+  romanization: string;
+  translation: string;
+  feedback: string;
+  mistakes: string[];
+  suggestedReplies: string[];
+}
+
+export interface FallbackRoleplayPerformance {
+  fluency: number;
+  vocabulary: number;
+  grammar: number;
+  overall: number;
+  feedback: string;
+}
+
+export interface FallbackRoleplay {
+  reply: string;
+  romanization: string;
+  translation: string;
+  performance: FallbackRoleplayPerformance;
+  isCompleted: boolean;
+  suggestedResponses: string[];
+}
+
+export interface InitialConversationStarter {
+  topic: string;
+  text: string;
+  romaji: string;
+  translation: string;
+}
+
+export interface FallbackTranslationResult {
+  originalText: string;
+  translatedText: string;
+  pronunciation: string;
+  meaningHindi: string;
+  meaningEnglish: string;
+  grammarTip: string;
+  culturalTip: string;
+  relatedPhrases: { text: string; reading: string; meaning: string }[];
+}
+
+export interface FallbackPronunciationResult {
+  score: number;
+  accuracy: number;
+  intonation: string;
+  phoneticFeedback: string;
+  passed: boolean;
 }

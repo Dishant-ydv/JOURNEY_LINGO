@@ -19,7 +19,7 @@ import { JourneyLocation } from "../types";
 interface Props {
   locations: JourneyLocation[];
   onSelectLocation: (locId: string) => void;
-  onStartLesson: () => void;
+  onStartLesson: (locId?: string) => void;
 }
 
 export const MissionsJourneyView: React.FC<Props> = ({
@@ -83,12 +83,13 @@ export const MissionsJourneyView: React.FC<Props> = ({
           return (
             <div
               key={loc.id}
-              className={`p-6 rounded-3xl border transition-all ${
+              onClick={() => onStartLesson(loc.id)}
+              className={`p-6 rounded-3xl border transition-all cursor-pointer hover:shadow-md ${
                 isCompleted
-                  ? "bg-white border-emerald-200 shadow-xs"
+                  ? "bg-white border-emerald-200 shadow-xs hover:border-emerald-300"
                   : isInProgress
                   ? "bg-gradient-to-r from-indigo-50/70 via-white to-purple-50/50 border-indigo-300 ring-2 ring-indigo-500/20 shadow-md"
-                  : "bg-slate-50/80 border-slate-200/80 opacity-70"
+                  : "bg-white border-slate-200 hover:border-indigo-300"
               }`}
             >
               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -99,7 +100,7 @@ export const MissionsJourneyView: React.FC<Props> = ({
                         ? "bg-emerald-600 text-white"
                         : isInProgress
                         ? "bg-indigo-600 text-white shadow-indigo-200 shadow-md"
-                        : "bg-slate-200 text-slate-400"
+                        : "bg-indigo-100 text-indigo-700"
                     }`}
                   >
                     {getLocationIcon(loc.iconName)}
@@ -110,7 +111,7 @@ export const MissionsJourneyView: React.FC<Props> = ({
                       <span className="text-xs font-mono font-bold text-slate-400">
                         STAGE 0{loc.order}
                       </span>
-                      <span className="text-xs font-bold text-slate-500">
+                      <span className="text-xs font-bold text-slate-600">
                         {loc.japaneseName}
                       </span>
                       {isCompleted && (
@@ -125,9 +126,8 @@ export const MissionsJourneyView: React.FC<Props> = ({
                         </span>
                       )}
                       {isLocked && (
-                        <span className="text-[11px] bg-slate-100 text-slate-500 font-medium px-2 py-0.5 rounded-full flex items-center gap-1">
-                          <Lock className="w-3 h-3" />
-                          Locked
+                        <span className="text-[11px] bg-indigo-50 text-indigo-700 font-semibold px-2 py-0.5 rounded-full flex items-center gap-1">
+                          Ready to Explore
                         </span>
                       )}
                     </div>
@@ -150,38 +150,32 @@ export const MissionsJourneyView: React.FC<Props> = ({
                             ? "bg-emerald-500"
                             : isInProgress
                             ? "bg-indigo-600"
-                            : "bg-slate-300"
+                            : "bg-indigo-400"
                         }`}
                         style={{
-                          width: `${(loc.completedMissions / loc.totalMissions) * 100}%`,
+                          width: `${Math.max(25, (loc.completedMissions / loc.totalMissions) * 100)}%`,
                         }}
                       />
                     </div>
                   </div>
 
                   <div>
-                    {isInProgress && (
-                      <button
-                        onClick={onStartLesson}
-                        className="px-4 py-2.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-xl text-xs flex items-center gap-1.5 shadow-md shadow-indigo-200 transition-all"
-                      >
-                        Resume
-                        <ArrowRight className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                    {isCompleted && (
-                      <button
-                        onClick={onStartLesson}
-                        className="px-4 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold rounded-xl text-xs transition-colors"
-                      >
-                        Review
-                      </button>
-                    )}
-                    {isLocked && (
-                      <div className="p-2.5 bg-slate-100 rounded-xl text-slate-400">
-                        <Lock className="w-4 h-4" />
-                      </div>
-                    )}
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onStartLesson(loc.id);
+                      }}
+                      className={`px-4 py-2.5 rounded-xl text-xs font-bold flex items-center gap-1.5 shadow-sm transition-all ${
+                        isCompleted
+                          ? "bg-slate-100 hover:bg-slate-200 text-slate-700"
+                          : isInProgress
+                          ? "bg-indigo-600 hover:bg-indigo-700 text-white shadow-indigo-200"
+                          : "bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-200"
+                      }`}
+                    >
+                      <span>{isCompleted ? "Review" : isInProgress ? "Resume" : "Start Module"}</span>
+                      <ArrowRight className="w-3.5 h-3.5" />
+                    </button>
                   </div>
                 </div>
               </div>

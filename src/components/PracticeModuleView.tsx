@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import {
   MessageSquare,
   Users,
@@ -16,61 +16,92 @@ import {
   Award,
   AlertCircle,
   HelpCircle,
+  Languages,
 } from "lucide-react";
 import { UserProfile, RoleplayScenario, VocabWord } from "../types";
-import { roleplayScenarios, sampleVocabularyList } from "../data/mockData";
 import {
   sendAIConversation,
   sendAIRoleplay,
   evaluatePronunciation,
 } from "../services/aiService";
 import { speakText, playChime } from "../utils/audio";
+import { SmartTranslateTool } from "./SmartTranslateTool";
+import { getLanguageMeta, getLocationsForLanguage } from "../data/multilingualData";
+import { createSpeechRecognition, compareSpokenInput } from "../utils/pronunciation";
+import { getInitialConversation } from "../data/fallbackData";
+import {
+  getRoleplayScenarioForLanguageAndLocation,
+  getAllRoleplayScenariosForLanguage,
+  getVocabularyForLanguageAndModule,
+  getListeningChallengeForLanguageAndModule,
+} from "../data/lessonResolver";
 
 interface Props {
   user: UserProfile;
+  selectedModuleId?: string;
+  onSelectModule?: (moduleId: string) => void;
   onRecordXP: (amount: number) => void;
 }
 
 type SubModuleType =
   | "overview"
+  | "translate"
   | "ai_conversation"
   | "roleplay"
   | "pronunciation"
   | "listening"
   | "revision";
 
-export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
+export const PracticeModuleView: React.FC<Props> = ({
+  user,
+  selectedModuleId = "airport",
+  onSelectModule,
+  onRecordXP,
+}) => {
   const [activeSubModule, setActiveSubModule] = useState<SubModuleType>("overview");
 
+  const targetLang = user.targetLanguage || "Japanese";
+  const langMeta = getLanguageMeta(targetLang);
+  const locations = getLocationsForLanguage(targetLang);
+  const currentModuleId = selectedModuleId || "airport";
+  const currentLocationMeta =
+    locations.find((l) => l.id === currentModuleId) || locations[0];
+
+  const currentVocabList = getVocabularyForLanguageAndModule(targetLang, currentModuleId);
+  const availableScenarios = getAllRoleplayScenariosForLanguage(targetLang);
+  const listeningChallenge = getListeningChallengeForLanguageAndModule(targetLang, currentModuleId);
+
+  const initialConv = getInitialConversation(targetLang);
+
   // --- Sub-Module 1: AI Conversation State ---
-  const [convTopic, setConvTopic] = useState("Travel Plans to Tokyo");
+  const [convTopic, setConvTopic] = useState(initialConv.topic);
   const [convHistory, setConvHistory] = useState<
     { sender: "ai" | "user"; text: string; translation?: string; romaji?: string }[]
   >([
     {
       sender: "ai",
-      text: "こんにちは！今年どこへ旅行に行きたいですか？",
-      romaji: "Konnichiwa! Kotoshi doko e ryokou ni ikitai desu ka?",
-      translation: "Hello! Where would you like to travel this year?",
+      text: initialConv.text,
+      romaji: initialConv.romaji,
+      translation: initialConv.translation,
     },
   ]);
   const [convInput, setConvInput] = useState("");
   const [convLoading, setConvLoading] = useState(false);
   const [convFeedback, setConvFeedback] = useState<any>(null);
-  const [convMistakes, setConvMistakes] = useState<any[]>([
-    { original: "日本に行きます夏", correction: "夏の日本に行きます", explanation: "Place time particle に before destination." },
-  ]);
+  const [convMistakes, setConvMistakes] = useState<any[]>([]);
 
   // --- Sub-Module 2: Real-Life Roleplay State ---
-  const [selectedScenario, setSelectedScenario] = useState<RoleplayScenario>(roleplayScenarios[0]);
+  const [selectedScenario, setSelectedScenario] = useState<RoleplayScenario>(() =>
+    getRoleplayScenarioForLanguageAndLocation(targetLang, currentModuleId)
+  );
   const [roleplayHistory, setRoleplayHistory] = useState<
     { sender: "ai" | "user"; text: string; translation?: string; romaji?: string }[]
   >([
     {
       sender: "ai",
-      text: roleplayScenarios[0].initialMessage,
-      romaji: roleplayScenarios[0].initialRomaji,
-      translation: roleplayScenarios[0].initialTranslation,
+      text: selectedScenario.initialMessage,
+      romaji: selectedScenario.initialRomaji,
+      translation: selectedScenario.initialTranslation,
     },
   ]);
   const [roleplayInput, setRoleplayInput] = useState("");
@@ -90,6 +121,37 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
   const [revisionIndex, setRevisionIndex] = useState(0);
   const [revisionScore, setRevisionScore] = useState(0);
   const [revisionComplete, setRevisionComplete] = useState(false);
+
+  // Synchronize scenario, roleplay, and practice drills when language or module changes
+  useEffect(() => {
+    const updatedConv = getInitialConversation(targetLang);
+    setConvTopic(updatedConv.topic);
+    setConvHistory([
+      {
+        sender: "ai",
+        text: updatedConv.text,
+        romaji: updatedConv.romaji,
+        translation: updatedConv.translation,
+      },
+    ]);
+
+    const roleplay = getRoleplayScenarioForLanguageAndLocation(targetLang, currentModuleId);
+    setSelectedScenario(roleplay);
+    setRoleplayHistory([
+      {
+        sender: "ai",
+        text: roleplay.initialMessage,
+        romaji: roleplay.initialRomaji,
+        translation: roleplay.initialTranslation,
+      },
+    ]);
+    setRoleplayReport(null);
+    setPronounceIndex(0);
+    setPronounceResult(null);
+    setListeningAnswer("");
+    setListeningFeedback(null);
+    setRevisionComplete(false);
+  }, [targetLang, currentModuleId]);
 
   // AI Conversation Handlers
   const handleSendConversation = async (textToSend?: string) => {
@@ -176,12 +238,57 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
     }
   };
 
-  // Pronunciation evaluate handler
+  // Pronunciation evaluate handler using Web Speech API
   const handleTestPronunciation = async () => {
-    const target = sampleVocabularyList[pronounceIndex].word;
+    const target = currentVocabList[pronounceIndex]?.word || "Hello";
     setIsRecording(true);
 
-    // Simulate microphone audio recording or use speech recognition
+    const recognition = createSpeechRecognition();
+    if (recognition) {
+      try {
+        recognition.lang = langMeta.voiceCode;
+        recognition.continuous = false;
+        recognition.interimResults = false;
+
+        recognition.onresult = async (event: any) => {
+          setIsRecording(false);
+          const spoken = event.results[0][0]?.transcript || target;
+          const comparison = compareSpokenInput(target, spoken, targetLang);
+          const res = await evaluatePronunciation(target, spoken);
+          setPronounceResult({
+            ...res,
+            score: comparison.score,
+            accuracy: comparison.accuracy,
+            phoneticFeedback: `Heard: "${spoken}". ${res.phoneticFeedback}`,
+          });
+          if (comparison.passed) {
+            playChime(true);
+            onRecordXP(20);
+          } else {
+            playChime(false);
+          }
+        };
+
+        recognition.onerror = async () => {
+          setIsRecording(false);
+          const res = await evaluatePronunciation(target, target);
+          setPronounceResult(res);
+          playChime(true);
+          onRecordXP(20);
+        };
+
+        recognition.onend = () => {
+          setIsRecording(false);
+        };
+
+        recognition.start();
+        return;
+      } catch (err) {
+        console.warn("Speech recognition fallback:", err);
+      }
+    }
+
+    // Fallback simulation when Web Speech API is not available
     setTimeout(async () => {
       setIsRecording(false);
       const res = await evaluatePronunciation(target, target);
@@ -197,14 +304,20 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
       <div className="bg-white rounded-3xl p-6 border border-slate-200/80 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div>
-            <span className="text-xs font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full">
-              Practice Module
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold uppercase tracking-wider text-indigo-600 bg-indigo-50 px-2.5 py-1 rounded-full">
+                Practice Module
+              </span>
+              <span className="text-xs font-bold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-full flex items-center gap-1">
+                <span>{langMeta.flag}</span>
+                <span>{langMeta.name}</span>
+              </span>
+            </div>
             <h2 className="text-xl font-black text-slate-900 mt-1">
               Practice more. Improve better.
             </h2>
             <p className="text-xs text-slate-500">
-              Interactive AI roleplays, pronunciation evaluation, listening & revision
+              Interactive AI roleplays, pronunciation evaluation, listening & revision in {targetLang}
             </p>
           </div>
 
@@ -212,6 +325,7 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
           <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs font-semibold">
             {[
               { id: "overview", label: "Dashboard", icon: Sparkles },
+              { id: "translate", label: "0. 🇮🇳 Hindi Translator", icon: Languages },
               { id: "ai_conversation", label: "1. AI Conversation", icon: MessageSquare },
               { id: "roleplay", label: "2. Real-Life Roleplay", icon: Users },
               { id: "pronunciation", label: "3. Pronunciation", icon: Mic },
@@ -238,8 +352,62 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
           </div>
         </div>
 
+        {/* Dynamic Module Switcher for Practice (Airport, Hotel, Restaurant, Metro, Shopping, Attractions) */}
+        <div className="pt-3 border-t border-slate-100">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <div className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+              <span>Practicing Module:</span>
+              <span className="text-indigo-600 font-extrabold bg-indigo-50 px-2 py-0.5 rounded-md">
+                {currentLocationMeta.name}
+              </span>
+              <span className="text-slate-500 font-normal">({currentLocationMeta.japaneseName})</span>
+            </div>
+            <span className="text-[11px] font-semibold text-slate-400">
+              Select module below to switch content:
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-2">
+            {locations.map((loc) => {
+              const isCurrent = currentModuleId === loc.id;
+              return (
+                <button
+                  key={loc.id}
+                  onClick={() => {
+                    if (onSelectModule) onSelectModule(loc.id);
+                  }}
+                  className={`p-2.5 rounded-2xl border text-left flex items-center gap-2.5 transition-all ${
+                    isCurrent
+                      ? "bg-indigo-600 text-white border-indigo-600 shadow-sm font-bold ring-2 ring-indigo-300"
+                      : "bg-slate-50 hover:bg-slate-100 border-slate-200 text-slate-700 hover:border-indigo-300 font-medium"
+                  }`}
+                >
+                  <span className="text-lg">
+                    {loc.id === "airport" && "✈️"}
+                    {loc.id === "hotel" && "🏨"}
+                    {loc.id === "restaurant" && "🍜"}
+                    {loc.id === "metro" && "🚇"}
+                    {loc.id === "shopping" && "🛍️"}
+                    {loc.id === "attractions" && "🏛️"}
+                  </span>
+                  <div className="overflow-hidden">
+                    <div className="text-xs truncate font-bold leading-tight">{loc.name}</div>
+                    <div
+                      className={`text-[10px] truncate ${
+                        isCurrent ? "text-indigo-100" : "text-slate-500"
+                      }`}
+                    >
+                      {loc.japaneseName.split(" ")[0]}
+                    </div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* Practice Overview Strip (Screen 9 top) */}
-        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-2 text-center">
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 pt-1 text-center">
           <div className="p-3 rounded-2xl bg-indigo-50/60 border border-indigo-100">
             <div className="text-2xl font-black text-indigo-950">68%</div>
             <div className="text-[11px] font-bold text-indigo-600">Overall Progress</div>
@@ -271,77 +439,119 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
 
       {/* OVERVIEW / MENU SELECTION */}
       {activeSubModule === "overview" && (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {[
-            {
-              id: "ai_conversation",
-              title: "1. AI Conversation",
-              desc: "Chat naturally with the AI tutor on generated travel topics. Automatic grammar feedback & mistake logging.",
-              badge: "Voice & Text",
-              icon: MessageSquare,
-              color: "bg-indigo-50 text-indigo-600",
-            },
-            {
-              id: "roleplay",
-              title: "2. Real-Life Roleplay",
-              desc: "Simulate authentic situations: Hotel Receptionist, Ramen Chef, Narita Airport Officer. Get Fluency & Vocabulary scores.",
-              badge: "Scenario Based",
-              icon: Users,
-              color: "bg-teal-50 text-teal-600",
-            },
-            {
-              id: "pronunciation",
-              title: "3. Pronunciation Practice",
-              desc: "Listen to native audio, record your own voice, and receive speech accuracy percentage and intonation guidance.",
-              badge: "Audio Analysis",
-              icon: Mic,
-              color: "bg-amber-50 text-amber-600",
-            },
-            {
-              id: "listening",
-              title: "4. Listening Practice",
-              desc: "Hear real audio snippets in Japanese, deduce what the speaker is asking, and write the meaning in English.",
-              badge: "Comprehension",
-              icon: Headphones,
-              color: "bg-rose-50 text-rose-600",
-            },
-            {
-              id: "revision",
-              title: "5. Revision",
-              desc: "Smart recommendation engine: review saved mistakes, tricky vocabulary, and review weak grammar topics.",
-              badge: "Personalized",
-              icon: RotateCcw,
-              color: "bg-purple-50 text-purple-600",
-            },
-          ].map((item) => {
-            const Icon = item.icon;
-            return (
-              <div
-                key={item.id}
-                onClick={() => setActiveSubModule(item.id as SubModuleType)}
-                className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-xs hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
-              >
-                <div>
-                  <div className="flex items-center justify-between mb-3">
-                    <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-bold ${item.color}`}>
-                      <Icon className="w-5 h-5" />
-                    </div>
-                    <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
-                      {item.badge}
-                    </span>
-                  </div>
-                  <h3 className="font-black text-slate-900 text-base">{item.title}</h3>
-                  <p className="text-xs text-slate-500 mt-1 leading-relaxed">{item.desc}</p>
-                </div>
-
-                <div className="pt-4 flex items-center text-xs font-bold text-indigo-600">
-                  Open Practice
-                  <ArrowRight className="w-4 h-4 ml-1" />
-                </div>
+        <div className="space-y-4">
+          {/* Smart Hindi Translator Hero Banner */}
+          <div
+            onClick={() => setActiveSubModule("translate")}
+            className="p-5 rounded-3xl bg-gradient-to-r from-indigo-900 via-indigo-800 to-purple-900 text-white flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 cursor-pointer hover:shadow-lg transition-all group"
+          >
+            <div className="space-y-1.5">
+              <div className="flex items-center gap-2">
+                <span className="px-2 py-0.5 rounded bg-amber-400 text-slate-950 text-[10px] font-black tracking-wider">
+                  SPECIAL FEATURE
+                </span>
+                <span className="text-xs font-bold text-indigo-200">
+                  Hindi Input ➔ {user.targetLanguage} Translation & Audio
+                </span>
               </div>
-            );
-          })}
+              <h3 className="text-lg font-black group-hover:text-amber-200 transition-colors flex items-center gap-2">
+                <span>🇮🇳 Smart Native Language Translator</span>
+              </h3>
+              <p className="text-xs text-indigo-100/90 max-w-xl leading-relaxed">
+                अपनी भाषा (हिंदी/इंग्लिश) में कोई भी वाक्य लिखें — यह तुरंत {user.targetLanguage} में अनुवाद, देवनागरी उच्चारण, शब्दावली और आवाज के साथ सिखाएगा।
+              </p>
+            </div>
+            <button className="px-4 py-2.5 rounded-xl bg-white text-indigo-900 font-bold text-xs flex items-center gap-1.5 shadow-sm shrink-0 group-hover:bg-amber-300 transition-colors">
+              <span>Open Tool</span>
+              <ArrowRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {[
+              {
+                id: "translate",
+                title: "0. Hindi/Native Translator",
+                desc: `Type your thoughts in Hindi or English, and receive authentic ${user.targetLanguage} translation, reading, and audio.`,
+                badge: "Hindi ➔ Target",
+                icon: Languages,
+                color: "bg-amber-50 text-amber-600",
+              },
+              {
+                id: "ai_conversation",
+                title: "1. AI Conversation",
+                desc: `Chat naturally with the AI tutor in ${user.targetLanguage}. Automatic grammar feedback & mistake logging.`,
+                badge: "Voice & Text",
+                icon: MessageSquare,
+                color: "bg-indigo-50 text-indigo-600",
+              },
+              {
+                id: "roleplay",
+                title: "2. Real-Life Roleplay",
+                desc: `Simulate authentic travel situations in ${user.targetLanguage}: Hotel Receptionist, Waiter, Airport Officer.`,
+                badge: "Scenario Based",
+                icon: Users,
+                color: "bg-teal-50 text-teal-600",
+              },
+              {
+                id: "pronunciation",
+                title: "3. Pronunciation Practice",
+                desc: `Listen to native audio in ${user.targetLanguage}, record your voice, and receive speech accuracy analysis.`,
+                badge: "Audio Analysis",
+                icon: Mic,
+                color: "bg-amber-50 text-amber-600",
+              },
+              {
+                id: "listening",
+                title: "4. Listening Practice",
+                desc: `Hear real audio snippets in ${user.targetLanguage}, deduce what the speaker is asking, and write the meaning.`,
+                badge: "Comprehension",
+                icon: Headphones,
+                color: "bg-rose-50 text-rose-600",
+              },
+              {
+                id: "revision",
+                title: "5. Revision",
+                desc: "Smart recommendation engine: review saved mistakes, tricky vocabulary, and review weak grammar topics.",
+                badge: "Personalized",
+                icon: RotateCcw,
+                color: "bg-purple-50 text-purple-600",
+              },
+            ].map((item) => {
+              const Icon = item.icon;
+              return (
+                <div
+                  key={item.id}
+                  onClick={() => setActiveSubModule(item.id as SubModuleType)}
+                  className="p-5 rounded-3xl bg-white border border-slate-200/80 shadow-xs hover:border-indigo-300 hover:shadow-md transition-all cursor-pointer flex flex-col justify-between"
+                >
+                  <div>
+                    <div className="flex items-center justify-between mb-3">
+                      <div className={`w-11 h-11 rounded-2xl flex items-center justify-center font-bold ${item.color}`}>
+                        <Icon className="w-5 h-5" />
+                      </div>
+                      <span className="text-[10px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">
+                        {item.badge}
+                      </span>
+                    </div>
+                    <h3 className="font-black text-slate-900 text-base">{item.title}</h3>
+                    <p className="text-xs text-slate-500 mt-1 leading-relaxed">{item.desc}</p>
+                  </div>
+
+                  <div className="pt-4 flex items-center text-xs font-bold text-indigo-600">
+                    Open Practice
+                    <ArrowRight className="w-4 h-4 ml-1" />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
+      )}
+
+      {/* SUB-MODULE 0: SMART TRANSLATION TOOL */}
+      {activeSubModule === "translate" && (
+        <SmartTranslateTool user={user} onRecordXP={onRecordXP} />
       )}
 
       {/* SUB-MODULE 1: AI CONVERSATION (Slide 3 item 1) */}
@@ -516,7 +726,7 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
 
             {/* Scenario Chooser */}
             <div className="flex gap-1.5 overflow-x-auto text-xs">
-              {roleplayScenarios.map((sc) => (
+              {availableScenarios.map((sc) => (
                 <button
                   key={sc.id}
                   onClick={() => {
@@ -664,7 +874,7 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
               Reply
             </button>
             <button
-              onClick={() => handleSendRoleplay("ありがとうございました！(Conclude roleplay)", true)}
+              onClick={() => handleSendRoleplay("Thank you! Conclude roleplay", true)}
               className="px-3 py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl text-xs"
               title="Finish and evaluate scenario"
             >
@@ -683,29 +893,41 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
             </span>
             <h3 className="text-lg font-black text-slate-900 mt-1">Pronunciation Practice</h3>
             <p className="text-xs text-slate-500">
-              Word {pronounceIndex + 1} of {sampleVocabularyList.length}
+              {currentLocationMeta.name} • Word {pronounceIndex + 1} of {currentVocabList.length}
             </p>
           </div>
 
           {/* Word to speak */}
           <div className="p-8 rounded-2xl bg-gradient-to-b from-amber-50/50 to-white border border-amber-200/70 space-y-3">
             <div className="text-4xl font-black text-slate-900">
-              {sampleVocabularyList[pronounceIndex].word}
+              {currentVocabList[pronounceIndex]?.word}
             </div>
-            <div className="text-sm font-mono text-slate-500">
-              {sampleVocabularyList[pronounceIndex].reading}
-            </div>
+            {currentVocabList[pronounceIndex]?.reading && (
+              <div className="text-sm font-mono text-slate-500">
+                {currentVocabList[pronounceIndex]?.reading}
+              </div>
+            )}
             <div className="text-base font-bold text-amber-900">
-              {sampleVocabularyList[pronounceIndex].meaning}
+              {currentVocabList[pronounceIndex]?.meaning}
             </div>
+            {currentVocabList[pronounceIndex]?.hindiMeaning && (
+              <div className="text-sm font-semibold text-emerald-700">
+                🇮🇳 {currentVocabList[pronounceIndex]?.hindiMeaning}
+              </div>
+            )}
 
             <div className="flex justify-center gap-3 pt-2">
               <button
-                onClick={() => speakText(sampleVocabularyList[pronounceIndex].word)}
+                onClick={() =>
+                  speakText(
+                    currentVocabList[pronounceIndex]?.word || "",
+                    langMeta.voiceCode
+                  )
+                }
                 className="px-4 py-2 rounded-xl bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:bg-slate-50 flex items-center gap-1.5 shadow-xs"
               >
                 <Volume2 className="w-4 h-4 text-indigo-600" />
-                Listen Native Audio
+                Listen Native Audio ({langMeta.name})
               </button>
             </div>
           </div>
@@ -754,7 +976,7 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
             </button>
             <button
               onClick={() => {
-                setPronounceIndex((pronounceIndex + 1) % sampleVocabularyList.length);
+                setPronounceIndex((pronounceIndex + 1) % currentVocabList.length);
                 setPronounceResult(null);
               }}
               className="px-4 py-2 bg-indigo-600 text-white rounded-xl text-xs font-bold hover:bg-indigo-700"
@@ -774,7 +996,7 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
             </span>
             <h3 className="text-lg font-black text-slate-900 mt-1">Listening Practice</h3>
             <p className="text-xs text-slate-500">
-              Listen carefully to the audio and answer the question
+              Listen carefully to the audio and answer the question in {targetLang} ({currentLocationMeta.name})
             </p>
           </div>
 
@@ -784,33 +1006,30 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
             </div>
 
             <button
-              onClick={() => speakText("どこに行きますか？")}
+              onClick={() => speakText(listeningChallenge.audioText, langMeta.voiceCode)}
               className="px-5 py-2.5 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 mx-auto shadow-md shadow-rose-200 transition-all"
             >
               <Volume2 className="w-4 h-4" />
-              Play Audio Clip
+              Play Audio Clip ({langMeta.name})
             </button>
 
             <div className="text-sm font-bold text-slate-900 pt-2">
-              Question: What is the person asking in the audio?
+              Question: {listeningChallenge.question}
+            </div>
+            <div className="text-xs font-semibold text-slate-500">
+              🇮🇳 {listeningChallenge.hindiQuestion}
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-w-md mx-auto text-left text-xs">
-              {[
-                "Where are you going?",
-                "What time is the train?",
-                "How much is the ticket?",
-                "Where is the hotel?",
-              ].map((opt) => (
+              {listeningChallenge.options.map((opt) => (
                 <button
                   key={opt}
                   onClick={() => {
                     setListeningAnswer(opt);
-                    const isCorrect = opt === "Where are you going?";
+                    const isCorrect = opt === listeningChallenge.correctAnswer;
                     setListeningFeedback({
                       isCorrect,
-                      explanation:
-                        "「どこに行きますか？」 (Doko ni ikimasu ka?) combines どこ (where) + に (direction particle) + 行きますか (are you going?).",
+                      explanation: listeningChallenge.explanation,
                     });
                     if (isCorrect) {
                       playChime(true);
@@ -821,7 +1040,7 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
                   }}
                   className={`p-3 rounded-xl border font-semibold transition-all ${
                     listeningAnswer === opt
-                      ? opt === "Where are you going?"
+                      ? opt === listeningChallenge.correctAnswer
                         ? "bg-emerald-50 border-emerald-500 text-emerald-900"
                         : "bg-rose-50 border-rose-400 text-rose-900"
                       : "bg-white border-slate-200 text-slate-800 hover:border-indigo-400"
@@ -834,14 +1053,14 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
 
             {listeningFeedback && (
               <div
-                className={`p-4 rounded-xl text-xs text-left max-w-md mx-auto border ${
+                className={`p-4 rounded-xl text-xs text-left max-w-md mx-auto border whitespace-pre-line ${
                   listeningFeedback.isCorrect
                     ? "bg-emerald-50 border-emerald-200 text-emerald-900"
                     : "bg-rose-50 border-rose-200 text-rose-900"
                 }`}
               >
                 <div className="font-bold">
-                  {listeningFeedback.isCorrect ? "✅ Well done! Score: 90/100" : "❌ Incorrect"}
+                  {listeningFeedback.isCorrect ? "✅ Well done! Score: 95/100" : "❌ Incorrect"}
                 </div>
                 <div className="mt-1">{listeningFeedback.explanation}</div>
               </div>
@@ -861,57 +1080,75 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
               Personalized Revision & Weak Areas
             </h3>
             <p className="text-xs text-slate-500">
-              Smart recommendations based on previous mistakes and quizzing
+              Smart practice recommendations for {targetLang} ({currentLocationMeta.name})
             </p>
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
             <div className="p-4 rounded-2xl bg-purple-50/60 border border-purple-100">
-              <div className="font-bold text-purple-900">Difficult Words</div>
-              <div className="text-2xl font-black text-purple-950 mt-1">12</div>
-              <div className="text-[11px] text-purple-700 mt-0.5">Recommended review</div>
+              <div className="font-bold text-purple-900">Module Vocabulary</div>
+              <div className="text-2xl font-black text-purple-950 mt-1">
+                {currentVocabList.length}
+              </div>
+              <div className="text-[11px] text-purple-700 mt-0.5">Active review words</div>
             </div>
             <div className="p-4 rounded-2xl bg-amber-50/60 border border-amber-100">
               <div className="font-bold text-amber-900">Saved Mistakes</div>
-              <div className="text-2xl font-black text-amber-950 mt-1">8</div>
+              <div className="text-2xl font-black text-amber-950 mt-1">4</div>
               <div className="text-[11px] text-amber-700 mt-0.5">From roleplay sessions</div>
             </div>
             <div className="p-4 rounded-2xl bg-teal-50/60 border border-teal-100">
-              <div className="font-bold text-teal-900">Weak Topics</div>
-              <div className="text-2xl font-black text-teal-950 mt-1">1</div>
-              <div className="text-[11px] text-teal-700 mt-0.5">Particles: に vs で</div>
+              <div className="font-bold text-teal-900">Target Language</div>
+              <div className="text-2xl font-black text-teal-950 mt-1">{langMeta.name.split(" ")[0]}</div>
+              <div className="text-[11px] text-teal-700 mt-0.5">{langMeta.city} immersion</div>
             </div>
           </div>
 
           {/* Quick Revision Drill */}
           <div className="p-5 rounded-2xl bg-slate-50 border border-slate-200 space-y-3">
             <div className="text-xs font-bold uppercase text-indigo-700">
-              Quiz Time: Choose the correct meaning of 「予約する」
+              Quiz Time ({currentLocationMeta.name}): Choose the correct meaning of 「
+              {currentVocabList[0]?.word}」
+              {currentVocabList[0]?.reading ? ` (${currentVocabList[0]?.reading})` : ""}
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs font-semibold">
               {[
-                { label: "To make a reservation / book", correct: true },
-                { label: "To check out of the room", correct: false },
-                { label: "To ask for Wi-Fi", correct: false },
-                { label: "To order ramen", correct: false },
-              ].map((opt, i) => (
-                <button
-                  key={i}
-                  onClick={() => {
-                    if (opt.correct) {
-                      playChime(true);
-                      setRevisionScore(revisionScore + 1);
-                      setRevisionComplete(true);
-                      onRecordXP(20);
-                    } else {
-                      playChime(false);
-                    }
-                  }}
-                  className="p-3 rounded-xl bg-white border border-slate-200 hover:border-indigo-400 text-left text-slate-800"
-                >
-                  {opt.label}
-                </button>
-              ))}
+                {
+                  label: `${currentVocabList[0]?.meaning} (${currentVocabList[0]?.hindiMeaning || ""})`,
+                  correct: true,
+                },
+                {
+                  label: currentVocabList[1]?.meaning || "Hotel checkout",
+                  correct: false,
+                },
+                {
+                  label: currentVocabList[2]?.meaning || "Ask for direction",
+                  correct: false,
+                },
+                {
+                  label: currentVocabList[3]?.meaning || "Purchase ticket",
+                  correct: false,
+                },
+              ]
+                .sort(() => 0.5 - Math.random())
+                .map((opt, i) => (
+                  <button
+                    key={i}
+                    onClick={() => {
+                      if (opt.correct) {
+                        playChime(true);
+                        setRevisionScore(revisionScore + 1);
+                        setRevisionComplete(true);
+                        onRecordXP(20);
+                      } else {
+                        playChime(false);
+                      }
+                    }}
+                    className="p-3 rounded-xl bg-white border border-slate-200 hover:border-indigo-400 text-left text-slate-800"
+                  >
+                    {opt.label}
+                  </button>
+                ))}
             </div>
           </div>
 
@@ -920,7 +1157,7 @@ export const PracticeModuleView: React.FC<Props> = ({ user, onRecordXP }) => {
               <div>
                 <div className="font-bold">Great Job! Progress Updated!</div>
                 <div className="text-emerald-700 text-[11px]">
-                  You are almost there! Retention score: 80/100 ⭐⭐⭐⭐
+                  You are mastering {currentLocationMeta.name}! Retention score: 90/100 ⭐⭐⭐⭐
                 </div>
               </div>
               <span className="font-black text-sm text-emerald-700">+20 XP</span>
