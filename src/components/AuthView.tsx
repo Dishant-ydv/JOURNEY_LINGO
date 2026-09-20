@@ -35,14 +35,20 @@ export const AuthView: React.FC<AuthViewProps> = ({
   const [mode, setMode] = useState<AuthMode>("login");
 
   // Login Form States
-  const [loginEmail, setLoginEmail] = useState("dishantyadav357@gmail.com");
-  const [loginPassword, setLoginPassword] = useState("password123");
+  const [loginEmail, setLoginEmail] = useState<string>(() => {
+    try {
+      return localStorage.getItem("journeylingo_saved_email") || "";
+    } catch {
+      return "";
+    }
+  });
+  const [loginPassword, setLoginPassword] = useState("");
   const [showLoginPassword, setShowLoginPassword] = useState(false);
-  const [rememberMe, setRememberMe] = useState(true);
+  const [rememberMe, setRememberMe] = useState(false);
 
   // Register Form States
-  const [regName, setRegName] = useState(defaultProfile.name || "Dishant Yadav");
-  const [regEmail, setRegEmail] = useState("dishantyadav357@gmail.com");
+  const [regName, setRegName] = useState("");
+  const [regEmail, setRegEmail] = useState("");
   const [regPassword, setRegPassword] = useState("");
   const [regConfirmPassword, setRegConfirmPassword] = useState("");
   const [showRegPassword, setShowRegPassword] = useState(false);
@@ -127,11 +133,13 @@ export const AuthView: React.FC<AuthViewProps> = ({
       setSuccessMessage("Welcome back! Loading your learning journey...");
 
       // Generate or retrieve profile
+      const derivedName = loginEmail.includes("@")
+        ? loginEmail.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())
+        : loginEmail;
+
       const loggedInProfile: UserProfile = {
         ...defaultProfile,
-        name: loginEmail.includes("dishant")
-          ? "Dishant"
-          : loginEmail.split("@")[0].replace(/[._-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+        name: derivedName.trim() || defaultProfile.name || "Learner",
         email: loginEmail,
       };
 
@@ -440,7 +448,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
                         type="text"
                         value={loginEmail}
                         onChange={(e) => setLoginEmail(e.target.value)}
-                        placeholder="e.g. dishantyadav357@gmail.com"
+                        placeholder="name@example.com"
                         className="w-full pl-10 pr-4 py-2.5 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-500 text-sm focus:outline-hidden focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
                         required
                       />
@@ -528,8 +536,8 @@ export const AuthView: React.FC<AuthViewProps> = ({
                         type="button"
                         onClick={() =>
                           handleQuickDemo(
-                            "Dishant Yadav",
-                            "dishantyadav357@gmail.com",
+                            "Alex Morgan",
+                            "alex.demo@journeylingo.app",
                             "Beginner"
                           )
                         }
@@ -537,7 +545,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
                       >
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-bold text-white group-hover:text-indigo-300">
-                            Dishant Yadav 🇯🇵
+                            Alex Morgan 🇯🇵
                           </span>
                           <span className="text-[10px] px-1.5 py-0.5 rounded-sm bg-indigo-500/20 text-indigo-300 font-semibold">
                             Tokyo
@@ -591,7 +599,7 @@ export const AuthView: React.FC<AuthViewProps> = ({
                           type="text"
                           value={regName}
                           onChange={(e) => setRegName(e.target.value)}
-                          placeholder="e.g. Dishant Yadav"
+                          placeholder="e.g. Alex Morgan"
                           className="w-full pl-9 pr-3 py-2 bg-slate-800/80 border border-slate-700 rounded-xl text-white placeholder-slate-500 text-xs focus:outline-hidden focus:border-indigo-500"
                           required
                         />
