@@ -58,11 +58,30 @@ jobs:
         run: |
           sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
 
-      - name: Enable WebView Audio and Media Permissions
+      - name: Configure Clean MainActivity
         run: |
-          MAIN_ACTIVITY="android/app/src/main/java/com/journeylingo/app/MainActivity.java"
-          sed -i '/import com.getcapacitor.BridgeActivity;/a import android.webkit.PermissionRequest;\nimport android.webkit.WebChromeClient;\nimport android.os.Bundle;' "$MAIN_ACTIVITY"
-          sed -i '/public class MainActivity extends BridgeActivity {/a \    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        super.onCreate(savedInstanceState);\n        this.bridge.getWebView().getSettings().setMediaPlaybackRequiresUserGesture(false);\n        this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {\n            @Override\n            public void onPermissionRequest(final PermissionRequest request) {\n                request.grant(request.getResources());\n            }\n        });\n    }' "$MAIN_ACTIVITY"
+          cat << 'JAVA' > android/app/src/main/java/com/journeylingo/app/MainActivity.java
+          package com.journeylingo.app;
+
+          import android.os.Bundle;
+          import android.webkit.PermissionRequest;
+          import android.webkit.WebChromeClient;
+          import com.getcapacitor.BridgeActivity;
+
+          public class MainActivity extends BridgeActivity {
+              @Override
+              public void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+                  this.bridge.getWebView().getSettings().setMediaPlaybackRequiresUserGesture(false);
+                  this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {
+                      @Override
+                      public void onPermissionRequest(final PermissionRequest request) {
+                          request.grant(request.getResources());
+                      }
+                  });
+              }
+          }
+          JAVA
 
       - name: Fix Kotlin Duplicate Class Conflict
         run: |
