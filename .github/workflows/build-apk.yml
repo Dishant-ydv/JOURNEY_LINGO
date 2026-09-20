@@ -54,6 +54,16 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      - name: Add Audio & Microphone Permissions
+        run: |
+          sed -i '/<\/manifest>/i \    <uses-permission android:name="android.permission.RECORD_AUDIO" />\n    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />\n    <uses-permission android:name="android.permission.INTERNET" />' android/app/src/main/AndroidManifest.xml
+
+      - name: Enable WebView Audio and Media Permissions
+        run: |
+          MAIN_ACTIVITY="android/app/src/main/java/com/journeylingo/app/MainActivity.java"
+          sed -i '/import com.getcapacitor.BridgeActivity;/a import android.webkit.PermissionRequest;\nimport android.webkit.WebChromeClient;\nimport android.os.Bundle;' "$MAIN_ACTIVITY"
+          sed -i '/public class MainActivity extends BridgeActivity {/a \    @Override\n    public void onCreate(Bundle savedInstanceState) {\n        super.onCreate(savedInstanceState);\n        this.bridge.getWebView().getSettings().setMediaPlaybackRequiresUserGesture(false);\n        this.bridge.getWebView().setWebChromeClient(new WebChromeClient() {\n            @Override\n            public void onPermissionRequest(final PermissionRequest request) {\n                request.grant(request.getResources());\n            }\n        });\n    }' "$MAIN_ACTIVITY"
+
       - name: Fix Kotlin Duplicate Class Conflict
         run: |
           echo "
